@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Circular LEO — inclination and RAAN</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #e7eef8;
+    --muted: #93a0b5;
+    --line: rgba(190, 214, 255, 0.16);
+    --cyan: #3ee0ff;
+    --amber: #ffb703;
+    --coral: #ff5d73;
+    --blue: #7aa2ff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #05070c;
+    color: var(--ink);
+    font-family: "Avenir Next", "Segoe UI", sans-serif;
+  }
+  canvas { display: block; cursor: grab; }
+  body.dragging canvas { cursor: grabbing; }
+  #veil {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse at 55% 45%, transparent 42%, rgba(0, 0, 0, 0.5) 100%);
+  }
+  #panel {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    width: min(340px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    overflow: auto;
+    padding: 16px 16px 14px;
+    border-radius: 16px;
+    background: rgba(8, 12, 20, 0.78);
+    border: 1px solid var(--line);
+    backdrop-filter: blur(16px);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  }
+  h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .sub {
+    margin: 3px 0 14px;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.4;
+  }
+  .field { display: block; margin: 0 0 12px; }
+  .field-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+  .field-top span:last-child {
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .field-row { display: flex; gap: 10px; align-items: center; }
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 4px;
+    border-radius: 999px;
+    background: #243044;
+    outline: none;
+    margin: 0;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--cyan);
+    border: 2px solid #041018;
+    cursor: pointer;
+    box-shadow: 0 0 0 4px rgba(62, 224, 255, 0.14);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--cyan);
+    border: 2px solid #041018;
+    cursor: pointer;
+  }
+  input[type="number"] {
+    width: 78px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: #101820;
+    color: var(--ink);
+    font: 14px/1.2 ui-monospace, "SF Mono", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type="number"]:focus, button:focus-visible {
+    outline: 2px solid rgba(62, 224, 255, 0.55);
+    outline-offset: 1px;
+  }
+  .hint {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  dl {
+    margin: 4px 0 12px;
+    display: grid;
+    grid-template-columns: 108px 1fr;
+    gap: 5px 8px;
+    font-size: 12.5px;
+  }
+  dt { color: var(--muted); }
+  dd {
+    margin: 0;
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .row { display: flex; gap: 8px; margin-bottom: 10px; }
+  button {
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  button:hover { border-color: rgba(62, 224, 255, 0.65); }
+  button[aria-pressed="true"] {
+    background: rgba(62, 224, 255, 0.12);
+    border-color: rgba(62, 224, 255, 0.5);
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    margin: 0 0 8px;
+    color: var(--muted);
+    font-size: 11.5px;
+  }
+  .legend i {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: 0px;
+  }
+  .note {
+    margin: 0;
+    color: var(--muted);
+    font-size: 11.5px;
+    line-height: 1.45;
+  }
+  .globe-label {
+    color: #d5deea;
+    font: 11px/1 ui-monospace, "SF Mono", monospace;
+    letter-spacing: 0.03em;
+    text-shadow: 0 1px 3px #000, 0 0 8px #000;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .globe-label.prime { color: #ffd27a; }
+  .globe-label.an { color: #ff8fa0; }
+  #boot-error {
+    position: fixed;
+    left: 16px;
+    bottom: 16px;
+    max-width: 420px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #3a1218;
+    color: #ffd5dc;
+    font-size: 13px;
+  }
+  @media (max-width: 720px) {
+    #panel {
+      top: auto;
+      bottom: 10px;
+      left: 10px;
+      width: calc(100vw - 20px);
+      max-height: 46vh;
+    }
+  }
+</style>
+</head>
+<body>
+<div id="veil"></div>
+<aside id="panel">
+  <h1>Circular LEO</h1>
+  <p class="sub">The globe spins eastward under a fixed orbit. Drag to look around.</p>
+
+  <label class="field">
+    <div class="field-top"><span>Inclination</span><span>degrees</span></div>
+    <div class="field-row">
+      <input id="inc-range" type="range" min="0" max="180" step="0.1" value="51.6" aria-label="Inclination">
+      <input id="inc-num" type="number" min="0" max="180" step="0.1" value="51.6" aria-label="Inclination degrees">
+    </div>
+    <p class="hint">Tilt of the orbital plane from the equator. This is the highest latitude the track reaches.</p>
+  </label>
+
+  <label class="field">
+    <div class="field-top"><span>RAAN</span><span>degrees</span></div>
+    <div class="field-row">
+      <input id="raan-range" type="range" min="0" max="360" step="0.1" value="0" aria-label="RAAN">
+      <input id="raan-num" type="number" min="0" max="360" step="0.1" value="0" aria-label="RAAN degrees">
+    </div>
+    <p class="hint">Fixed angle of the ascending node in space. The orbit does not turn with the Earth; the ground longitude under the node is shown below.</p>
+  </label>
+
+  <label class="field">
+    <div class="field-top"><span>Earth spin</span><span>turns / min</span></div>
+    <div class="field-row">
+      <input id="spin-range" type="range" min="0" max="6" step="0.1" value="1.3" aria-label="Earth spin speed">
+      <input id="spin-num" type="number" min="0" max="6" step="0.1" value="1.3" aria-label="Earth spin, turns per minute">
+    </div>
+  </label>
+
+  <label class="field">
+    <div class="field-top"><span>Satellite</span><span>orbits / min</span></div>
+    <div class="field-row">
+      <input id="sat-range" type="range" min="0" max="10" step="0.1" value="2.1" aria-label="Satellite orbit speed">
+      <input id="sat-num" type="number" min="0" max="10" step="0.1" value="2.1" aria-label="Satellite speed, orbits per minute">
+    </div>
+  </label>
+
+  <dl>
+    <dt>Under the node</dt>
+    <dd id="read-an">0.0°</dd>
+    <dt>Latitude range</dt>
+    <dd id="read-lat">±51.6°</dd>
+    <dt>Northernmost</dt>
+    <dd id="read-apex">51.6° N · 90.0° E</dd>
+    <dt>Under satellite</dt>
+    <dd id="read-sat">—</dd>
+  </dl>
+
+  <div class="row">
+    <button id="play" type="button" aria-pressed="true">Pause motion</button>
+    <button id="reset" type="button">Reset view</button>
+  </div>
+
+  <div class="legend">
+    <span><i style="background:#3ee0ff"></i>Orbit</span>
+    <span><i style="background:#ffb703"></i>Ground track</span>
+    <span><i style="background:#ff5d73"></i>Ascending node</span>
+    <span><i style="background:#7aa2ff"></i>Descending node</span>
+  </div>
+  <p class="note" id="scale-note"></p>
+  <p class="note" id="help-note">Drag to rotate. Right-drag, Shift-drag, or two fingers to move. Scroll to zoom. Click the globe or press Space to pause.</p>
+</aside>
+<div id="boot-error" hidden></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+window.addEventListener('error', (event) => {
+  const el = document.getElementById('boot-error');
+  el.hidden = false;
+  el.textContent = event.message || 'The view failed to start.';
+});
+
+// Y up (north). +X is the prime meridian when the globe's spin angle is 0.
+// Longitude is positive east, toward -Z.
+// The orbit is inertial: inclination and RAAN stay fixed in space.
+// Geographic longitude under a fixed point is that inertial longitude minus the spin.
+
+const EARTH_R = 1;
+const EARTH_KM = 6371;
+const ORBIT_R = 1.28;
+const ALT_KM = Math.round((ORBIT_R - EARTH_R) * EARTH_KM);
+const UP = new THREE.Vector3(0, 1, 0);
+
+const state = {
+  inc: 51.6,
+  raan: 0,
+  nu: -0.55,
+  playing: true,
+  spinRpm: 1.3,
+  satRpm: 2.1
+};
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const incRange = document.getElementById('inc-range');
+const incNum = document.getElementById('inc-num');
+const raanRange = document.getElementById('raan-range');
+const raanNum = document.getElementById('raan-num');
+const spinRange = document.getElementById('spin-range');
+const spinNum = document.getElementById('spin-num');
+const satRange = document.getElementById('sat-range');
+const satNum = document.getElementById('sat-num');
+const readAn = document.getElementById('read-an');
+const readLat = document.getElementById('read-lat');
+const readApex = document.getElementById('read-apex');
+const readSat = document.getElementById('read-sat');
+const playBtn = document.getElementById('play');
+const scaleNote = document.getElementById('scale-note');
+
+scaleNote.textContent =
+  `Drawn at ${ALT_KM.toLocaleString('en-US')} km, still inside LEO, so the path stays clear of the surface. ` +
+  'The ground track is the same curve at any altitude.';
+
+function clamp(n, a, b) { return Math.min(b, Math.max(a, n)); }
+function wrap180(deg) {
+  return ((deg + 180) % 360 + 360) % 360 - 180;
+}
+function wrap360(deg) {
+  return ((deg % 360) + 360) % 360;
+}
+function fmtLat(deg) {
+  const hemi = deg >= 0 ? 'N' : 'S';
+  return `${Math.abs(deg).toFixed(1)}° ${hemi}`;
+}
+function fmtLon(deg) {
+  const w = wrap180(deg);
+  if (Math.abs(Math.abs(w) - 180) < 0.05) return '180°';
+  if (Math.abs(w) < 0.05) return '0°';
+  return `${Math.abs(w).toFixed(1)}° ${w >= 0 ? 'E' : 'W'}`;
+}
+
+function orbitPoint(radius, incDeg, raanDeg, nu, target) {
+  const i = incDeg * Math.PI / 180;
+  const O = raanDeg * Math.PI / 180;
+  const ci = Math.cos(i);
+  const si = Math.sin(i);
+  const cO = Math.cos(O);
+  const sO = Math.sin(O);
+  const cv = Math.cos(nu);
+  const sv = Math.sin(nu);
+  return target.set(
+    radius * (cO * cv - sO * sv * ci),
+    radius * (sv * si),
+    radius * (-sO * cv - cO * sv * ci)
+  );
+}
+
+function latLonOf(v) {
+  const r = v.length() || 1;
+  const lat = Math.asin(THREE.MathUtils.clamp(v.y / r, -1, 1)) * 180 / Math.PI;
+  const lon = Math.atan2(-v.z, v.x) * 180 / Math.PI;
+  return { lat, lon };
+}
+
+function spinDeg() {
+  return globe.rotation.y * 180 / Math.PI;
+}
+
+function geoLon(inertialDeg) {
+  return wrap180(inertialDeg - spinDeg());
+}
+
+function latLonToVec(latDeg, lonDeg, radius, target) {
+  const lat = latDeg * Math.PI / 180;
+  const lon = lonDeg * Math.PI / 180;
+  const cl = Math.cos(lat);
+  return target.set(
+    radius * cl * Math.cos(lon),
+    radius * Math.sin(lat),
+    -radius * cl * Math.sin(lon)
+  );
+}
+
+class OrbitCurve extends THREE.Curve {
+  constructor(radius, incDeg, raanDeg) {
+    super();
+    this.radius = radius;
+    this.incDeg = incDeg;
+    this.raanDeg = raanDeg;
+  }
+  getPoint(t, optionalTarget = new THREE.Vector3()) {
+    return orbitPoint(this.radius, this.incDeg, this.raanDeg, t * Math.PI * 2, optionalTarget);
+  }
+}
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.08;
+renderer.domElement.style.touchAction = 'none';
+document.body.prepend(renderer.domElement);
+
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.setSize(window.innerWidth, window.innerHeight);
+labelRenderer.domElement.style.position = 'fixed';
+labelRenderer.domElement.style.inset = '0';
+labelRenderer.domElement.style.pointerEvents = 'none';
+document.body.appendChild(labelRenderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05070c);
+
+const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.05, 300);
+const home = new THREE.Vector3(3.05, 1.42, 3.05);
+camera.position.copy(home);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.rotateSpeed = 0.55;
+controls.zoomSpeed = 0.75;
+controls.panSpeed = 0.7;
+controls.enablePan = true;
+controls.screenSpacePanning = true;
+controls.minDistance = 1.7;
+controls.maxDistance = 12;
+controls.target.set(0, 0, 0);
+controls.mouseButtons = {
+  LEFT: THREE.MOUSE.ROTATE,
+  MIDDLE: THREE.MOUSE.DOLLY,
+  RIGHT: THREE.MOUSE.PAN
+};
+controls.touches = {
+  ONE: THREE.TOUCH.ROTATE,
+  TWO: THREE.TOUCH.DOLLY_PAN
+};
+controls.addEventListener('start', () => document.body.classList.add('dragging'));
+controls.addEventListener('end', () => document.body.classList.remove('dragging'));
+controls.update();
+
+const globe = new THREE.Group();
+scene.add(globe);
+
+const earthMat = new THREE.ShaderMaterial({
+  toneMapped: false,
+  uniforms: {
+    map: { value: null },
+    hasMap: { value: 0 },
+    baseColor: { value: new THREE.Color(0x2f6fa8) }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D map;
+    uniform float hasMap;
+    uniform vec3 baseColor;
+    varying vec2 vUv;
+    void main() {
+      vec3 col = hasMap > 0.5 ? texture2D(map, vUv).rgb : baseColor;
+      // Uniform shadow lift, then encode. No light direction, so no night side.
+      col = mix(col, sqrt(max(col, 0.0)), 0.5);
+      col = pow(max(col, 0.0), vec3(0.4545));
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `
+});
+const earth = new THREE.Mesh(new THREE.SphereGeometry(EARTH_R, 96, 64), earthMat);
+globe.add(earth);
+
+const atmosMat = new THREE.ShaderMaterial({
+  transparent: true,
+  blending: THREE.AdditiveBlending,
+  side: THREE.BackSide,
+  depthWrite: false,
+  toneMapped: false,
+  vertexShader: `
+    varying vec3 vNormal;
+    void main() {
+      vNormal = normalize(normalMatrix * normal);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    varying vec3 vNormal;
+    void main() {
+      float intensity = pow(0.58 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.0);
+      gl_FragColor = vec4(0.35, 0.62, 1.0, 1.0) * intensity;
+    }
+  `
+});
+const atmosphere = new THREE.Mesh(new THREE.SphereGeometry(EARTH_R * 1.1, 64, 48), atmosMat);
+atmosphere.renderOrder = 1;
+globe.add(atmosphere);
+
+function addStars() {
+  const count = 1600;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const color = new THREE.Color();
+  for (let i = 0; i < count; i++) {
+    const r = 48 + Math.random() * 40;
+    const theta = Math.random() * Math.PI * 2;
+    const u = Math.random() * 2 - 1;
+    const s = Math.sqrt(1 - u * u);
+    positions[i * 3] = r * s * Math.cos(theta);
+    positions[i * 3 + 1] = r * u;
+    positions[i * 3 + 2] = r * s * Math.sin(theta);
+    const tint = 0.75 + Math.random() * 0.25;
+    color.setRGB(tint * 0.85, tint * 0.9, tint);
+    colors[i * 3] = color.r;
+    colors[i * 3 + 1] = color.g;
+    colors[i * 3 + 2] = color.b;
+  }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  scene.add(new THREE.Points(geom, new THREE.PointsMaterial({
+    size: 0.12,
+    sizeAttenuation: true,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.9,
+    depthWrite: false
+  })));
+}
+addStars();
+
+const scratch = new THREE.Vector3();
+function lineThrough(points, material) {
+  const geom = new THREE.BufferGeometry().setFromPoints(points);
+  return new THREE.Line(geom, material);
+}
+function meridian(lonDeg, radius, segments, material) {
+  const pts = [];
+  for (let i = 0; i <= segments; i++) {
+    const lat = -90 + (180 * i) / segments;
+    pts.push(latLonToVec(lat, lonDeg, radius, new THREE.Vector3()));
+  }
+  return lineThrough(pts, material);
+}
+function parallel(latDeg, radius, segments, material, loop) {
+  const pts = [];
+  const n = loop ? segments : segments;
+  for (let i = 0; i < n; i++) {
+    pts.push(latLonToVec(latDeg, (360 * i) / n, radius, new THREE.Vector3()));
+  }
+  if (!loop) pts.push(latLonToVec(latDeg, 360, radius, new THREE.Vector3()));
+  const geom = new THREE.BufferGeometry().setFromPoints(pts);
+  return loop
+    ? new THREE.LineLoop(geom, material)
+    : new THREE.Line(geom, material);
+}
+
+const gridMat = new THREE.LineBasicMaterial({ color: 0xd5e2f2, transparent: true, opacity: 0.22 });
+const equatorMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 });
+const primeMat = new THREE.LineBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.85 });
+const gridR = EARTH_R * 1.006;
+for (let lon = 0; lon < 360; lon += 30) {
+  globe.add(meridian(lon, gridR, 64, lon === 0 ? primeMat : gridMat));
+}
+for (const lat of [-60, -30, 30, 60]) {
+  globe.add(parallel(lat, gridR, 96, gridMat, true));
+}
+globe.add(parallel(0, gridR, 128, equatorMat, true));
+
+const axisMat = new THREE.LineBasicMaterial({ color: 0xd5e2f2, transparent: true, opacity: 0.7 });
+globe.add(lineThrough([
+  new THREE.Vector3(0, EARTH_R * 1.02, 0),
+  new THREE.Vector3(0, EARTH_R * 1.46, 0)
+], axisMat));
+globe.add(lineThrough([
+  new THREE.Vector3(0, -EARTH_R * 1.02, 0),
+  new THREE.Vector3(0, -EARTH_R * 1.22, 0)
+], axisMat));
+
+function makeLabel(text, className) {
+  const div = document.createElement('div');
+  div.className = 'globe-label' + (className ? ' ' + className : '');
+  div.textContent = text;
+  return new CSS2DObject(div);
+}
+const placedLabels = [];
+function placeLabel(text, className, lat, lon, radius) {
+  const label = makeLabel(text, className);
+  latLonToVec(lat, lon, radius, label.position);
+  globe.add(label);
+  placedLabels.push(label);
+  return label;
+}
+placeLabel('N', '', 90, 0, 1.5);
+placeLabel('S', '', -90, 0, 1.28);
+placeLabel('0°', 'prime', 0, 0, 1.46);
+placeLabel('90° E', '', 0, 90, 1.46);
+placeLabel('180°', '', 0, 180, 1.46);
+placeLabel('90° W', '', 0, -90, 1.46);
+
+const mats = {
+  orbit: new THREE.MeshBasicMaterial({ color: 0x3ee0ff }),
+  ground: new THREE.MeshBasicMaterial({ color: 0xffb703 }),
+  arrow: new THREE.MeshBasicMaterial({ color: 0xe9fbff }),
+  an: new THREE.MeshBasicMaterial({ color: 0xff5d73 }),
+  dn: new THREE.MeshBasicMaterial({ color: 0x7aa2ff }),
+  apex: new THREE.MeshBasicMaterial({ color: 0xb6ffcf }),
+  limit: new THREE.LineBasicMaterial({ color: 0x9fdfff, transparent: true, opacity: 0.45 }),
+  stemAn: new THREE.LineBasicMaterial({ color: 0xff5d73, transparent: true, opacity: 0.9 }),
+  stemDn: new THREE.LineBasicMaterial({ color: 0x7aa2ff, transparent: true, opacity: 0.75 })
+};
+const arrowGeom = new THREE.ConeGeometry(0.034, 0.12, 14);
+const markerGeom = new THREE.SphereGeometry(1, 22, 16);
+const sharedGeom = new Set([arrowGeom, markerGeom]);
+
+const orbitGroup = new THREE.Group();
+scene.add(orbitGroup);
+
+const anLabel = makeLabel('AN', 'an');
+scene.add(anLabel);
+
+const sat = new THREE.Group();
+const satCore = new THREE.Mesh(
+  new THREE.SphereGeometry(0.032, 20, 16),
+  new THREE.MeshBasicMaterial({ color: 0xffffff })
+);
+const satGlow = new THREE.Mesh(
+  new THREE.SphereGeometry(0.055, 16, 12),
+  new THREE.MeshBasicMaterial({ color: 0x8af4ff, transparent: true, opacity: 0.35, depthWrite: false })
+);
+sat.add(satGlow, satCore);
+scene.add(sat);
+
+const nadir = new THREE.Mesh(markerGeom, mats.ground);
+nadir.scale.setScalar(0.02);
+scene.add(nadir);
+
+const radialGeom = new THREE.BufferGeometry();
+radialGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+const radial = new THREE.Line(radialGeom, new THREE.LineBasicMaterial({
+  color: 0xffb703,
+  transparent: true,
+  opacity: 0.8
+}));
+scene.add(radial);
+
+const satTarget = new THREE.Vector3();
+const nadirTarget = new THREE.Vector3();
+const viewScratch = new THREE.Vector3();
+const worldScratch = new THREE.Vector3();
+
+function updateLabelVisibility() {
+  viewScratch.copy(camera.position).sub(controls.target);
+  const showIfFacing = (label, minDot) => {
+    label.getWorldPosition(worldScratch);
+    const show = worldScratch.dot(viewScratch) > minDot;
+    label.element.style.visibility = show ? 'visible' : 'hidden';
+  };
+  for (const label of placedLabels) showIfFacing(label, 0);
+  showIfFacing(anLabel, -0.4);
+}
+
+function clearOrbitGroup() {
+  for (const child of [...orbitGroup.children]) {
+    orbitGroup.remove(child);
+    if (child.geometry && !sharedGeom.has(child.geometry)) child.geometry.dispose();
+  }
+}
+
+function addMarker(material, scale, nu) {
+  const mesh = new THREE.Mesh(markerGeom, material);
+  mesh.scale.setScalar(scale);
+  orbitPoint(ORBIT_R, state.inc, state.raan, nu, mesh.position);
+  const outward = mesh.position.clone().normalize();
+  mesh.position.addScaledVector(outward, 0.03);
+  orbitGroup.add(mesh);
+  return mesh;
+}
+
+function addStem(material, nu) {
+  const outer = orbitPoint(ORBIT_R, state.inc, state.raan, nu, new THREE.Vector3());
+  const inner = outer.clone().normalize().multiplyScalar(EARTH_R * 1.02);
+  orbitGroup.add(lineThrough([inner, outer], material));
+}
+
+function addArrow(curve, t) {
+  const pos = curve.getPoint(t);
+  const tan = curve.getTangent(t).normalize();
+  const mesh = new THREE.Mesh(arrowGeom, mats.arrow);
+  mesh.quaternion.setFromUnitVectors(UP, tan);
+  mesh.position.copy(pos).addScaledVector(pos.clone().normalize(), 0.045);
+  orbitGroup.add(mesh);
+}
+
+function rebuild() {
+  clearOrbitGroup();
+  const orbitCurve = new OrbitCurve(ORBIT_R, state.inc, state.raan);
+  const groundCurve = new OrbitCurve(EARTH_R * 1.03, state.inc, state.raan);
+  orbitGroup.add(new THREE.Mesh(new THREE.TubeGeometry(orbitCurve, 256, 0.02, 10, true), mats.orbit));
+  orbitGroup.add(new THREE.Mesh(new THREE.TubeGeometry(groundCurve, 256, 0.011, 8, true), mats.ground));
+  for (const t of [0.12, 0.37, 0.62, 0.87]) addArrow(orbitCurve, t);
+  addMarker(mats.an, 0.034, 0);
+  addMarker(mats.dn, 0.028, Math.PI);
+  addStem(mats.stemAn, 0);
+  addStem(mats.stemDn, Math.PI);
+
+  const iRad = state.inc * Math.PI / 180;
+  const maxLat = Math.asin(Math.sin(iRad)) * 180 / Math.PI;
+  if (maxLat > 1.5 && maxLat < 88) {
+    orbitGroup.add(parallel(maxLat, gridR, 128, mats.limit, true));
+    orbitGroup.add(parallel(-maxLat, gridR, 128, mats.limit, true));
+    const apex = new THREE.Mesh(markerGeom, mats.apex);
+    apex.scale.setScalar(0.022);
+    orbitPoint(1, state.inc, state.raan, Math.PI / 2, apex.position);
+    apex.position.normalize().multiplyScalar(EARTH_R * 1.03);
+    orbitGroup.add(apex);
+  }
+
+  orbitPoint(ORBIT_R, state.inc, state.raan, 0, anLabel.position);
+  anLabel.position.y += 0.26;
+
+  readLat.textContent = `±${maxLat.toFixed(1)}°`;
+  updateCoverage();
+}
+
+function updateCoverage() {
+  const iRad = state.inc * Math.PI / 180;
+  const maxLat = Math.asin(Math.sin(iRad)) * 180 / Math.PI;
+  readAn.textContent = fmtLon(geoLon(state.raan));
+  if (maxLat < 0.8) {
+    readApex.textContent = 'Equatorial — track follows the equator';
+  } else if (maxLat > 89) {
+    const a = fmtLon(geoLon(state.raan));
+    const b = fmtLon(geoLon(state.raan + 180));
+    readApex.textContent = `Polar — meridians ${a} and ${b}`;
+  } else {
+    const apexInertial = Math.cos(iRad) >= 0 ? state.raan + 90 : state.raan - 90;
+    readApex.textContent = `${fmtLat(maxLat)} · ${fmtLon(geoLon(apexInertial))}`;
+  }
+}
+
+function updateSatellite(dt) {
+  if (state.playing && !reducedMotion) {
+    state.nu = (state.nu + dt * state.satRpm * Math.PI * 2 / 60) % (Math.PI * 2);
+  }
+  orbitPoint(ORBIT_R, state.inc, state.raan, state.nu, satTarget);
+  sat.position.copy(satTarget);
+  nadirTarget.copy(satTarget).normalize().multiplyScalar(EARTH_R * 1.025);
+  nadir.position.copy(nadirTarget);
+  const arr = radialGeom.attributes.position.array;
+  arr[0] = satTarget.x; arr[1] = satTarget.y; arr[2] = satTarget.z;
+  arr[3] = nadirTarget.x; arr[4] = nadirTarget.y; arr[5] = nadirTarget.z;
+  radialGeom.attributes.position.needsUpdate = true;
+  const geo = latLonOf(satTarget);
+  readSat.textContent = `${fmtLat(geo.lat)} · ${fmtLon(geoLon(geo.lon))}`;
+  updateCoverage();
+}
+
+function setInc(value, source) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return;
+  state.inc = clamp(n, 0, 180);
+  if (source !== 'range') incRange.value = String(state.inc);
+  if (source !== 'num') incNum.value = state.inc.toFixed(1);
+  rebuild();
+}
+function setRaan(value, source) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return;
+  state.raan = wrap360(n);
+  if (source !== 'range') raanRange.value = String(state.raan);
+  if (source !== 'num') raanNum.value = (Math.abs(state.raan - 360) < 1e-6 ? 0 : state.raan).toFixed(1);
+  rebuild();
+}
+
+incRange.addEventListener('input', () => setInc(incRange.value, 'range'));
+incNum.addEventListener('input', () => setInc(incNum.value, 'num'));
+incNum.addEventListener('change', () => { incNum.value = state.inc.toFixed(1); });
+raanRange.addEventListener('input', () => setRaan(raanRange.value, 'range'));
+raanNum.addEventListener('input', () => setRaan(raanNum.value, 'num'));
+raanNum.addEventListener('change', () => {
+  raanNum.value = (Math.abs(state.raan) < 1e-6 ? 0 : state.raan).toFixed(1);
+});
+
+function setSpin(value, source) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return;
+  state.spinRpm = clamp(n, 0, 6);
+  if (source !== 'range') spinRange.value = String(state.spinRpm);
+  if (source !== 'num') spinNum.value = state.spinRpm.toFixed(1);
+}
+function setSatSpeed(value, source) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return;
+  state.satRpm = clamp(n, 0, 10);
+  if (source !== 'range') satRange.value = String(state.satRpm);
+  if (source !== 'num') satNum.value = state.satRpm.toFixed(1);
+}
+spinRange.addEventListener('input', () => setSpin(spinRange.value, 'range'));
+spinNum.addEventListener('input', () => setSpin(spinNum.value, 'num'));
+spinNum.addEventListener('change', () => { spinNum.value = state.spinRpm.toFixed(1); });
+satRange.addEventListener('input', () => setSatSpeed(satRange.value, 'range'));
+satNum.addEventListener('input', () => setSatSpeed(satNum.value, 'num'));
+satNum.addEventListener('change', () => { satNum.value = state.satRpm.toFixed(1); });
+
+function setMotion(playing) {
+  state.playing = playing;
+  playBtn.setAttribute('aria-pressed', String(playing));
+  playBtn.textContent = playing ? 'Pause motion' : 'Play motion';
+}
+function toggleMotion() {
+  setMotion(!state.playing);
+}
+playBtn.addEventListener('click', (event) => {
+  event.stopPropagation();
+  toggleMotion();
+});
+
+window.addEventListener('keydown', (event) => {
+  if (event.code !== 'Space' || event.repeat) return;
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') return;
+  event.preventDefault();
+  toggleMotion();
+});
+
+let pointerDown = null;
+renderer.domElement.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+  pointerDown = { x: event.clientX, y: event.clientY, moved: false };
+});
+window.addEventListener('pointermove', (event) => {
+  if (!pointerDown) return;
+  if (Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 6) pointerDown.moved = true;
+});
+window.addEventListener('pointerup', (event) => {
+  if (!pointerDown || event.button !== 0) return;
+  const tap = !pointerDown.moved;
+  pointerDown = null;
+  if (tap) toggleMotion();
+});
+document.getElementById('reset').addEventListener('click', () => {
+  camera.position.copy(home);
+  controls.target.set(0, 0, 0);
+  controls.update();
+});
+renderer.domElement.addEventListener('dblclick', () => {
+  camera.position.copy(home);
+  controls.target.set(0, 0, 0);
+  controls.update();
+});
+
+const loader = new THREE.TextureLoader();
+loader.setCrossOrigin('anonymous');
+const texBase = 'https://threejs.org/examples/textures/planets/';
+function loadTex(name, onLoad, onError) {
+  loader.load(texBase + name, onLoad, undefined, onError);
+}
+loadTex('earth_atmos_2048.jpg', (tex) => {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  earthMat.uniforms.map.value = tex;
+  earthMat.uniforms.hasMap.value = 1;
+}, () => {
+  earthMat.uniforms.baseColor.value.set(0x1d4e86);
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  labelRenderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+if (reducedMotion) {
+  state.playing = false;
+  state.nu = Math.PI / 2;
+  playBtn.setAttribute('aria-pressed', 'false');
+  playBtn.textContent = 'Play motion';
+}
+
+rebuild();
+updateSatellite(0);
+
+const SPIN_ACCEL = 0.22;
+let spinVel = 0;
+
+const clock = new THREE.Clock();
+function frame() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (state.playing && !reducedMotion) {
+    const target = state.spinRpm * Math.PI * 2 / 60;
+    const step = SPIN_ACCEL * dt;
+    spinVel = spinVel < target ? Math.min(target, spinVel + step) : Math.max(target, spinVel - step);
+    globe.rotation.y += spinVel * dt;
+  }
+  controls.update();
+  updateSatellite(dt);
+  updateCoverage();
+  updateLabelVisibility();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
