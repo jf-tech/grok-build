@@ -24,21 +24,33 @@
     color: var(--ink);
     font-family: "Avenir Next", "Segoe UI", sans-serif;
   }
-  canvas { display: block; cursor: grab; }
-  body.dragging canvas { cursor: grabbing; }
-  #veil {
-    position: fixed;
+  #stage { position: fixed; inset: 0; overflow: hidden; }
+  #stage canvas {
+    position: absolute;
     inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: grab;
+  }
+  body.dragging #stage canvas { cursor: grabbing; }
+  #veil {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
     pointer-events: none;
     background: radial-gradient(ellipse at 55% 45%, transparent 42%, rgba(0, 0, 0, 0.5) 100%);
   }
   #panel {
     position: fixed;
+    z-index: 2;
     top: 16px;
     left: 16px;
     width: min(340px, calc(100vw - 32px));
     max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px);
     overflow: auto;
+    overscroll-behavior: contain;
     padding: 16px 16px 14px;
     border-radius: 16px;
     background: rgba(8, 12, 20, 0.78);
@@ -184,6 +196,7 @@
   .globe-label.an { color: #ff8fa0; }
   #boot-error {
     position: fixed;
+    z-index: 3;
     left: 16px;
     bottom: 16px;
     max-width: 420px;
@@ -193,19 +206,65 @@
     color: #ffd5dc;
     font-size: 13px;
   }
-  @media (max-width: 720px) {
-    #panel {
-      top: auto;
-      bottom: 10px;
-      left: 10px;
-      width: calc(100vw - 20px);
-      max-height: 46vh;
+  /* Narrow or short: the view and the settings each get a rectangle.
+     A fixed sheet over the canvas is what clipped the orbit in portrait. */
+  @media (max-width: 900px), (max-height: 560px) {
+    body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr) minmax(9.5rem, 46vh);
+      grid-template-rows: minmax(0, 1fr) minmax(9.5rem, 46dvh);
+      height: 100vh;
+      height: 100dvh;
     }
+    #stage {
+      position: relative;
+      inset: auto;
+      grid-column: 1;
+      grid-row: 1;
+      min-width: 0;
+      min-height: 0;
+    }
+    #panel {
+      position: relative;
+      top: auto;
+      left: auto;
+      grid-column: 1;
+      grid-row: 2;
+      width: auto;
+      max-width: none;
+      height: auto;
+      max-height: none;
+      min-height: 0;
+      border-radius: 18px 18px 0 0;
+      border-bottom: none;
+      box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.35);
+      padding-bottom: calc(14px + env(safe-area-inset-bottom));
+    }
+  }
+  @media (max-height: 560px) and (orientation: landscape) {
+    body {
+      grid-template-rows: minmax(0, 1fr);
+      grid-template-columns: minmax(200px, min(320px, 42vw)) minmax(0, 1fr);
+    }
+    #panel {
+      grid-column: 1;
+      grid-row: 1;
+      border-radius: 0;
+      border-top: none;
+      border-bottom: none;
+      border-left: none;
+      box-shadow: none;
+      padding-left: calc(16px + env(safe-area-inset-left));
+    }
+    #stage { grid-column: 2; grid-row: 1; }
   }
 </style>
 </head>
 <body>
-<div id="veil"></div>
+<div id="stage">
+  <div id="veil"></div>
+</div>
 <aside id="panel">
   <h1>Circular LEO</h1>
   <p class="sub">The globe spins eastward under a fixed orbit. Drag to look around.</p>
@@ -403,27 +462,32 @@ class OrbitCurve extends THREE.Curve {
   }
 }
 
+const stage = document.getElementById('stage');
+
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
 renderer.domElement.style.touchAction = 'none';
-document.body.prepend(renderer.domElement);
+stage.prepend(renderer.domElement);
 
 const labelRenderer = new CSS2DRenderer();
-labelRenderer.setSize(window.innerWidth, window.innerHeight);
-labelRenderer.domElement.style.position = 'fixed';
-labelRenderer.domElement.style.inset = '0';
+labelRenderer.domElement.style.position = 'absolute';
+labelRenderer.domElement.style.left = '0';
+labelRenderer.domElement.style.top = '0';
+labelRenderer.domElement.style.zIndex = '2';
 labelRenderer.domElement.style.pointerEvents = 'none';
-document.body.appendChild(labelRenderer.domElement);
+labelRenderer.domElement.style.overflow = 'hidden';
+stage.appendChild(labelRenderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x05070c);
 
-const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.05, 300);
-const home = new THREE.Vector3(3.05, 1.42, 3.05);
+const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 300);
+const HOME_DIR = new THREE.Vector3(3.05, 1.42, 3.05).normalize();
+const HOME_DIST = Math.hypot(3.05, 1.42, 3.05);
+const home = HOME_DIR.clone().multiplyScalar(HOME_DIST);
 camera.position.copy(home);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -446,9 +510,48 @@ controls.touches = {
   ONE: THREE.TOUCH.ROTATE,
   TWO: THREE.TOUCH.DOLLY_PAN
 };
-controls.addEventListener('start', () => document.body.classList.add('dragging'));
+let viewIsHome = true;
+controls.addEventListener('start', () => {
+  document.body.classList.add('dragging');
+  viewIsHome = false;
+});
 controls.addEventListener('end', () => document.body.classList.remove('dragging'));
 controls.update();
+
+// Pull the default view back only when the stage is too narrow or short
+// for the orbit and its labels. A wide desktop keeps HOME_DIST.
+const FIT_RADIUS = 1.9;
+function fitDistance(aspect) {
+  const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
+  const distW = FIT_RADIUS / (tanHalf * Math.max(aspect, 0.2));
+  const distH = 1.65 / tanHalf;
+  return Math.min(controls.maxDistance, Math.max(HOME_DIST, distW, distH));
+}
+function layoutView() {
+  const width = Math.max(1, stage.clientWidth);
+  const height = Math.max(1, stage.clientHeight);
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+  renderer.setSize(width, height, false);
+  labelRenderer.setSize(width, height);
+  home.copy(HOME_DIR).multiplyScalar(fitDistance(camera.aspect));
+  if (viewIsHome) {
+    camera.position.copy(home);
+    controls.target.set(0, 0, 0);
+    controls.update();
+  }
+}
+layoutView();
+new ResizeObserver(layoutView).observe(stage);
+window.addEventListener('resize', layoutView);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', layoutView);
+
+function goHome() {
+  viewIsHome = true;
+  camera.position.copy(home);
+  controls.target.set(0, 0, 0);
+  controls.update();
+}
 
 const globe = new THREE.Group();
 scene.add(globe);
@@ -852,16 +955,8 @@ window.addEventListener('pointerup', (event) => {
   pointerDown = null;
   if (tap) toggleMotion();
 });
-document.getElementById('reset').addEventListener('click', () => {
-  camera.position.copy(home);
-  controls.target.set(0, 0, 0);
-  controls.update();
-});
-renderer.domElement.addEventListener('dblclick', () => {
-  camera.position.copy(home);
-  controls.target.set(0, 0, 0);
-  controls.update();
-});
+document.getElementById('reset').addEventListener('click', goHome);
+renderer.domElement.addEventListener('dblclick', goHome);
 
 const loader = new THREE.TextureLoader();
 loader.setCrossOrigin('anonymous');
@@ -876,13 +971,6 @@ loadTex('earth_atmos_2048.jpg', (tex) => {
   earthMat.uniforms.hasMap.value = 1;
 }, () => {
   earthMat.uniforms.baseColor.value.set(0x1d4e86);
-});
-
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  labelRenderer.setSize(window.innerWidth, window.innerHeight);
 });
 
 if (reducedMotion) {
